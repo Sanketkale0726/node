@@ -1469,7 +1469,7 @@ struct ControlBase : public PcForErrors<ValidationTag::validate> {
   F(Resume, const ContIndexImmediate& imm, base::Vector<HandlerCase> handlers, \
     const Value& cont_ref, const Value args[], const Value returns[])          \
   F(ResumeHandler, base::Vector<const HandlerCase> handlers,                   \
-    int handler_index, const Value* cont_ref)                                  \
+    size_t handler_index, const Value* cont_ref)                               \
   F(ResumeThrow, const ContIndexImmediate& cont_imm,                           \
     const TagIndexImmediate& exc_imm, base::Vector<HandlerCase> handlers,      \
     const Value args[], const Value returns[])                                 \
@@ -4255,12 +4255,14 @@ class WasmFullDecoder : public WasmDecoder<ValidationTag, decoding_mode> {
     const TypeDefinition& type_def = this->module_->type(index);
     ValueType result_type =
         ValueType::Ref(index, type_def.is_shared, RefTypeKind::kFunction);
-    // For imported functions, we must return an inexact type, because
+    // For regular imported functions, we must return an inexact type, because
     // importing checks subtyping, i.e. for function types f1 <: f2, it is
     // legal to provide a function with type f1 when one with type f2 is
     // expected.
+    // Imports of kind "exact function" can produce exact references.
     if (this->enabled_.has_custom_descriptors() &&
-        imm.index >= this->module_->num_imported_functions) {
+        (imm.index >= this->module_->num_imported_functions ||
+         this->module_->functions[imm.index].exact)) {
       result_type = result_type.AsExact();
     }
     Value* value = Push(result_type);
@@ -4733,7 +4735,7 @@ class WasmFullDecoder : public WasmDecoder<ValidationTag, decoding_mode> {
                                        args.data(), returns);
     if (V8_LIKELY(current_code_reachable_and_ok_)) {
       MarkMightThrow();
-      for (int i = 0; i < handlers.length(); ++i) {
+      for (size_t i = 0; i < handlers.size(); ++i) {
         if (handlers[i].kind == kOnSuspend) {
           // TODO(thibaudm): Push tag params here.
           Value* suspend_cont =

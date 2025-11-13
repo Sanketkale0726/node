@@ -1477,7 +1477,6 @@ void CodeGenerator::AssembleCodeStartRegisterCheck() {
   __ Assert(equal, AbortReason::kWrongFunctionCodeStart);
 }
 
-#ifdef V8_ENABLE_LEAPTIERING
 // Check that {kJavaScriptCallDispatchHandleRegister} is correct.
 void CodeGenerator::AssembleDispatchHandleRegisterCheck() {
   DCHECK(linkage()->GetIncomingDescriptor()->IsJSFunctionCall());
@@ -1501,9 +1500,8 @@ void CodeGenerator::AssembleDispatchHandleRegisterCheck() {
   __ cmpl(rbx, Immediate(parameter_count_));
   __ Assert(equal, AbortReason::kWrongFunctionDispatchHandle);
 }
-#endif  // V8_ENABLE_LEAPTIERING
 
-void CodeGenerator::BailoutIfDeoptimized() { __ BailoutIfDeoptimized(rbx); }
+void CodeGenerator::AssertNotDeoptimized() { __ AssertNotDeoptimized(rbx); }
 
 bool ShouldClearOutputRegisterBeforeInstruction(CodeGenerator* g,
                                                 Instruction* instr) {
@@ -4476,6 +4474,13 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       RoundingMode const mode =
           static_cast<RoundingMode>(MiscField::decode(instr->opcode()));
       __ Roundps(i.OutputSimd128Register(), i.InputSimd128Register(0), mode);
+      break;
+    }
+    case kX64F32x8Round: {
+      CpuFeatureScope avx_scope(masm(), AVX);
+      RoundingMode const mode =
+          static_cast<RoundingMode>(MiscField::decode(instr->opcode()));
+      __ vroundps(i.OutputSimd256Register(), i.InputSimd256Register(0), mode);
       break;
     }
     case kX64F16x8Round: {

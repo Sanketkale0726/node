@@ -1916,13 +1916,9 @@ Maybe<bool> GetPropertyDescriptorWithInterceptor(LookupIterator* it,
     // Request was successfully intercepted, try to set the property
     // descriptor.
     args.AcceptSideEffects();
-    Utils::ApiCheck(
-        PropertyDescriptor::ToPropertyDescriptor(isolate, result, desc),
-        it->IsElement(*holder) ? "v8::IndexedPropertyDescriptorCallback"
-                               : "v8::NamedPropertyDescriptorCallback",
-        "Invalid property descriptor.");
-
-    return Just(true);
+    bool is_descriptor =
+        PropertyDescriptor::ToPropertyDescriptor(isolate, result, desc);
+    return is_descriptor ? Just(true) : Nothing<bool>();
   }
 
   it->Next();
@@ -2917,14 +2913,15 @@ void JSObject::JSObjectShortPrint(StringStream* accumulator) {
         accumulator->Add("<JSFunction");
       }
       if (v8_flags.trace_file_names) {
-        Tagged<Object> source_name =
-            Cast<Script>(function->shared()->script())->name();
-        if (IsString(source_name)) {
-          Tagged<String> str = Cast<String>(source_name);
-          if (str->length() > 0) {
-            accumulator->Add(" <");
-            accumulator->Put(str);
-            accumulator->Add(">");
+        if (Tagged<Script> script;
+            TryCast<Script>(function->shared()->script(), &script)) {
+          Tagged<Object> source_name = script->name();
+          if (Tagged<String> str; TryCast<String>(source_name, &str)) {
+            if (str->length() > 0) {
+              accumulator->Add(" <");
+              accumulator->Put(str);
+              accumulator->Add(">");
+            }
           }
         }
       }

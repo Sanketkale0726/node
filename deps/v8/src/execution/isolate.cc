@@ -18,6 +18,7 @@
 #include <unordered_map>
 #include <utility>
 
+#include "include/v8-callbacks.h"
 #include "include/v8-template.h"
 #include "src/api/api-arguments-inl.h"
 #include "src/api/api-inl.h"
@@ -96,7 +97,6 @@
 #include "src/objects/instance-type-inl.h"
 #include "src/objects/js-array-buffer-inl.h"
 #include "src/objects/js-array-inl.h"
-#include "src/objects/js-atomics-synchronization-inl.h"
 #include "src/objects/js-function.h"
 #include "src/objects/js-generator-inl.h"
 #include "src/objects/js-struct-inl.h"
@@ -111,7 +111,6 @@
 #include "src/objects/source-text-module-inl.h"
 #include "src/objects/string-set-inl.h"
 #include "src/objects/visitors.h"
-#include "src/objects/waiter-queue-node.h"
 #include "src/profiler/heap-profiler.h"
 #include "src/profiler/tracing-cpu-profiler.h"
 #include "src/regexp/regexp-stack.h"
@@ -891,6 +890,9 @@ class CallSiteBuilder {
     DCHECK_GT(index_, 0);
     Tagged<CallSiteInfo> info =
         Tagged<CallSiteInfo>::cast(elements_->get(index_ - 1));
+#if V8_ENABLE_WEBASSEMBLY
+    if (info->IsWasm()) return;
+#endif
     info->set_flags(info->flags() | CallSiteInfo::kIsConstructor);
   }
 
@@ -4577,11 +4579,6 @@ void Isolate::Deinit() {
   recorder_context_id_map_.clear();
 
   FutexEmulation::IsolateDeinit(this);
-  if (v8_flags.harmony_struct) {
-    JSSynchronizationPrimitive::IsolateDeinit(this);
-  } else {
-    DCHECK(async_waiter_queue_nodes_.empty());
-  }
 
   debug()->Unload();
 
@@ -5026,12 +5023,8 @@ void Isolate::NotifyExceptionPropagationCallback() {
             reinterpret_cast<const v8::PropertyCallbackInfo<v8::Value>*>(
                 ext_callback_scope->callback_info());
 
-        // Allow usages of v8::PropertyCallbackInfo<T>::Holder() for now.
-        // TODO(https://crbug.com/333672197): remove.
-        START_ALLOW_USE_DEPRECATED()
-
         DirectHandle<Object> holder =
-            Utils::OpenDirectHandle(*callback_info->Holder());
+            Utils::OpenDirectHandle(*callback_info->HolderV2());
         Handle<Object> maybe_name =
             PropertyCallbackArguments::GetPropertyKeyHandle(*callback_info);
         DirectHandle<Name> name =
@@ -5041,10 +5034,6 @@ void Isolate::NotifyExceptionPropagationCallback() {
                           *callback_info))
                 : Cast<Name>(maybe_name);
         DCHECK(IsJSReceiver(*holder));
-
-        // Allow usages of v8::PropertyCallbackInfo<T>::Holder() for now.
-        // TODO(https://crbug.com/333672197): remove.
-        END_ALLOW_USE_DEPRECATED()
 
         // Currently we call only ApiGetters from JS code.
         ReportExceptionPropertyCallback(Cast<JSReceiver>(holder), name, kind);
@@ -7064,6 +7053,32 @@ void Isolate::SetAddCrashKeyCallback(AddCrashKeyCallback callback) {
   AddCrashKeysForIsolateAndHeapPointers();
 }
 
+void Isolate::SetCrashKeyStringCallbacks(
+    AllocateCrashKeyStringCallback allocate_callback,
+    SetCrashKeyStringCallback set_callback) {
+  allocate_crash_key_string_callback_ = allocate_callback;
+  set_crash_key_string_callback_ = set_callback;
+}
+
+bool Isolate::HasCrashKeyStringCallbacks() {
+  DCHECK_EQ(static_cast<bool>(allocate_crash_key_string_callback_),
+            static_cast<bool>(set_crash_key_string_callback_));
+  return static_cast<bool>(allocate_crash_key_string_callback_);
+}
+
+CrashKey Isolate::AddCrashKeyString(const char key[], CrashKeySize size,
+                                    std::string_view value) {
+  CHECK(HasCrashKeyStringCallbacks());
+  CrashKey crash_key = allocate_crash_key_string_callback_(key, size);
+  set_crash_key_string_callback_(crash_key, value);
+  return crash_key;
+}
+
+void Isolate::SetCrashKeyString(CrashKey key, std::string_view value) {
+  if (!set_crash_key_string_callback_) return;
+  set_crash_key_string_callback_(key, value);
+}
+
 void Isolate::SetReleaseCppHeapCallback(
     v8::Isolate::ReleaseCppHeapCallback callback) {
   release_cpp_heap_callback_ = callback;
@@ -7098,8 +7113,7 @@ void Isolate::RunPromiseHook(PromiseHookType type,
                              DirectHandle<Object> parent) {
   if (!HasIsolatePromiseHooks()) return;
   DCHECK(promise_hook_ != nullptr);
-  promise_hook_(type, v8::Utils::PromiseToLocal(promise),
-                v8::Utils::ToLocal(parent));
+  promise_hook_(type, v8::Utils::ToLocal(promise), v8::Utils::ToLocal(parent));
 }
 
 void Isolate::OnAsyncFunctionSuspended(DirectHandle<JSPromise> promise,
@@ -7239,7 +7253,7 @@ void Isolate::ReportPromiseReject(DirectHandle<JSPromise> promise,
                                   v8::PromiseRejectEvent event) {
   if (promise_reject_callback_ == nullptr) return;
   promise_reject_callback_(v8::PromiseRejectMessage(
-      v8::Utils::PromiseToLocal(promise), event, v8::Utils::ToLocal(value)));
+      v8::Utils::ToLocal(promise), event, v8::Utils::ToLocal(value)));
 }
 
 void Isolate::SetUseCounterCallback(v8::Isolate::UseCounterCallback callback) {
@@ -7836,11 +7850,6 @@ Tagged<UnionOf<TheHole, StringSet>> Isolate::LocalsBlockListCacheGet(
 
   CHECK(IsStringSet(maybe_value));
   return Cast<StringSet>(maybe_value);
-}
-
-std::list<std::unique_ptr<detail::WaiterQueueNode>>&
-Isolate::async_waiter_queue_nodes() {
-  return async_waiter_queue_nodes_;
 }
 
 void DefaultWasmAsyncResolvePromiseCallback(

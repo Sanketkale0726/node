@@ -2011,25 +2011,17 @@ icu::LocaleMatcher BuildLocaleMatcher(
 
 class Iterator : public icu::Locale::Iterator {
  public:
-  Iterator(std::vector<std::string>::const_iterator begin,
-           std::vector<std::string>::const_iterator end)
-      : iter_(begin), end_(end) {}
+  Iterator(const std::vector<icu::Locale>& locales)
+      : locales_(locales), iter_(locales.cbegin()) {}
   ~Iterator() override = default;
 
-  UBool hasNext() const override { return iter_ != end_; }
+  UBool hasNext() const override { return iter_ != locales_.cend(); }
 
-  const icu::Locale& next() override {
-    UErrorCode status = U_ZERO_ERROR;
-    locale_ = icu::Locale::forLanguageTag(iter_->c_str(), status);
-    DCHECK(U_SUCCESS(status));
-    ++iter_;
-    return locale_;
-  }
+  const icu::Locale& next() override { return *(iter_++); }
 
  private:
-  std::vector<std::string>::const_iterator iter_;
-  std::vector<std::string>::const_iterator end_;
-  icu::Locale locale_;
+  const std::vector<icu::Locale>& locales_;
+  std::vector<icu::Locale>::const_iterator iter_;
 };
 
 // ecma402/#sec-bestfitmatcher
@@ -2052,7 +2044,15 @@ std::string BestFitMatcher(Isolate* isolate,
                            const std::set<std::string>& available_locales,
                            const std::vector<std::string>& requested_locales) {
   UErrorCode status = U_ZERO_ERROR;
-  Iterator iter(requested_locales.cbegin(), requested_locales.cend());
+  std::vector<icu::Locale> locales;
+  for (std::string locale_str : requested_locales) {
+    icu::Locale locale = icu::Locale::forLanguageTag(locale_str, status);
+    if (U_SUCCESS(status)) {
+      locales.push_back(locale);
+    }
+    status = U_ZERO_ERROR;
+  }
+  Iterator iter(locales);
   std::string bestfit = BuildLocaleMatcher(isolate, available_locales, &status)
                             .getBestMatchResult(iter, status)
                             .makeResolvedLocale(status)
@@ -2445,7 +2445,7 @@ std::map<std::string, std::string> LookupAndValidateUnicodeExtensions(
   if (U_FAILURE(status)) return extensions;
 
   if (!keywords) return extensions;
-  char value[ULOC_FULLNAME_CAPACITY];
+  char value[ULOC_FULLNAME_CAPACITY + 1];
 
   int32_t length;
   status = U_ZERO_ERROR;
@@ -2459,7 +2459,8 @@ std::map<std::string, std::string> LookupAndValidateUnicodeExtensions(
       continue;
     }
 
-    icu_locale->getKeywordValue(keyword, value, ULOC_FULLNAME_CAPACITY, status);
+    const int32_t value_len = icu_locale->getKeywordValue(
+        keyword, value, ULOC_FULLNAME_CAPACITY, status);
 
     // Ignore failures in ICU and skip to the next keyword.
     //
@@ -2468,6 +2469,9 @@ std::map<std::string, std::string> LookupAndValidateUnicodeExtensions(
       status = U_ZERO_ERROR;
       continue;
     }
+    // Ensure the `value` is null-terminated even when the `status` is
+    // `U_STRING_NOT_TERMINATED_WARNING`.
+    value[value_len] = '\0';
 
     const char* bcp47_key = uloc_toUnicodeLocaleKey(keyword);
 
@@ -2660,7 +2664,8 @@ MaybeDirectHandle<String> Intl::Normalize(Isolate* isolate,
   // Getting a singleton. Should not free it.
   const icu::Normalizer2* normalizer =
       icu::Normalizer2::getInstance(nullptr, form_name, form_mode, status);
-  DCHECK(U_SUCCESS(status));
+  // This should only fail on OOM
+  CHECK(U_SUCCESS(status));
   DCHECK_NOT_NULL(normalizer);
   int32_t normalized_prefix_length =
       normalizer->spanQuickCheckYes(input, status);
@@ -3098,7 +3103,11 @@ std::string Intl::DefaultTimeZone() {
   UErrorCode status = U_ZERO_ERROR;
   icu::UnicodeString canonical;
   icu::TimeZone::getCanonicalID(id, canonical, status);
-  DCHECK(U_SUCCESS(status));
+  if (!U_SUCCESS(status)) {
+    // System timezone APIs can't be trusted to return real, canonicalizeable
+    // timezones, so we return UTC when we can't canonicalize it.
+    return "UTC";
+  }
   return Intl::TimeZoneIdToString(canonical);
 }
 

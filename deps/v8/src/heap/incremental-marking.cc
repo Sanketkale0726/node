@@ -196,7 +196,7 @@ void IncrementalMarking::Start(GarbageCollector garbage_collector,
 
   std::string json_str;
 
-  if (V8_UNLIKELY(v8_flags.trace_gc_verbose)) {
+  if (heap_->is_gc_tracing_category_enabled()) {
     ::heap::base::UnsafeJsonEmitter json;
 
     json.object_start()
@@ -205,7 +205,7 @@ void IncrementalMarking::Start(GarbageCollector garbage_collector,
         .p("reason", reason)
         .p("old_gen_allocation_limit", heap_->old_generation_allocation_limit())
         .p("old_gen_consumed_bytes", heap_->OldGenerationConsumedBytes())
-        .p("old_gen_allocation_limit_bytes",
+        .p("old_gen_allocation_limit_consumed_bytes",
            heap_->OldGenerationAllocationLimitConsumedBytes())
         .p("old_gen_space_available", heap_->OldGenerationSpaceAvailable())
         .p("global_allocation_limit", heap_->global_allocation_limit())
@@ -214,8 +214,6 @@ void IncrementalMarking::Start(GarbageCollector garbage_collector,
         .object_end();
 
     json_str = json.ToString();
-    heap_->isolate()->PrintWithTimestamp("IncrementalMarkingStart: %s\n",
-                                         json_str.c_str());
   }
 
   TRACE_EVENT2("v8",

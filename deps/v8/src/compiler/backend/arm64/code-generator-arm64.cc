@@ -842,7 +842,6 @@ void CodeGenerator::AssembleCodeStartRegisterCheck() {
   __ Assert(eq, AbortReason::kWrongFunctionCodeStart);
 }
 
-#ifdef V8_ENABLE_LEAPTIERING
 // Check that {kJavaScriptCallDispatchHandleRegister} is correct.
 void CodeGenerator::AssembleDispatchHandleRegisterCheck() {
   DCHECK(linkage()->GetIncomingDescriptor()->IsJSFunctionCall());
@@ -870,9 +869,8 @@ void CodeGenerator::AssembleDispatchHandleRegisterCheck() {
   __ cmp(actual_parameter_count, scratch);
   __ Assert(eq, AbortReason::kWrongFunctionDispatchHandle);
 }
-#endif  // V8_ENABLE_LEAPTIERING
 
-void CodeGenerator::BailoutIfDeoptimized() { __ BailoutIfDeoptimized(); }
+void CodeGenerator::AssertNotDeoptimized() { __ AssertNotDeoptimized(); }
 
 int32_t GetLaneMask(int32_t lane_count) { return lane_count * 2 - 1; }
 
@@ -3549,6 +3547,10 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
                i.InputSimd128Register(0).V16B(),
                i.InputSimd128Register(1).V16B());
       }
+      break;
+    case kArm64S128OrNot:
+      __ Orn(i.OutputSimd128Register().V16B(), i.InputSimd128Register(0).V16B(),
+             i.InputSimd128Register(1).V16B());
       break;
     case kArm64Ssra: {
       int8_t laneSize = LaneSizeField::decode(opcode);
